@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src https://api.github.com; form-action 'none'; base-uri 'none'">
+  <meta name="referrer" content="no-referrer">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fulcrum · Maintainer workspace</title>
+  <meta name="theme-color" content="#181717">
+  <link rel="icon" href="./static/brand/fulcrum.png" type="image/png">
+  <link rel="stylesheet" href="./static/theme.css">
+  <script src="./static/app.js" type="module"></script>
+</head>
+<body data-transport="github">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="topbar">
+    <div class="shell masthead">
+      <div class="identity">
+        <img class="brand-mark" src="./static/brand/fulcrum.png" alt="" width="40" height="40">
+        <div>
+          <span class="brand">Fulcrum</span>
+          <span class="workspace">Maintainer workspace</span>
+        </div>
+      </div>
+      <div class="endorsement">
+        <img src="./static/brand/trail-of-bits.svg" alt="Trail of Bits" width="68" height="41">
+      </div>
+    </div>
+  </header>
+  <div class="toolbar">
+    <div class="shell toolbar-inner">
+      <nav class="view-nav" aria-label="Workspace views" id="workspace-nav" hidden>
+        <a id="view-inbox" href="#inbox" aria-current="page">
+          Inbox <span class="count" id="case-count"></span>
+        </a>
+        <a id="view-requests" href="#requests">
+          Patching requests <span class="count" id="request-count"></span>
+        </a>
+      </nav>
+      <div class="top-actions">
+        <a id="project-link" class="quiet-button" target="_blank" rel="noopener noreferrer" hidden>
+          GitHub Project <span aria-hidden="true">↗</span>
+        </a>
+        <button id="disconnect" class="quiet-button" type="button" hidden>Disconnect</button>
+        <button id="refresh" class="quiet-button" type="button" disabled>
+          <span aria-hidden="true">↻</span> Refresh
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <main class="shell" id="main" tabindex="-1">
+    <noscript>
+      <p class="notice">Fulcrum requires JavaScript.</p>
+    </noscript>
+    <p class="notice" id="connection" role="status">Connecting to GitHub…</p>
+    <form id="github-connect" class="panel github-connect" method="post" hidden>
+      <h1>Connect to GitHub</h1>
+      <label for="github-repository">Private operations repository</label>
+      <input id="github-repository" placeholder="owner/repository" required spellcheck="false"
+             autocomplete="off" autocapitalize="none">
+      <label for="github-token">GitHub access token</label>
+      <input id="github-token" type="password" required autocomplete="off"
+             aria-describedby="github-token-help">
+      <p class="muted" id="github-token-help">
+        This tab uses the token for GitHub API requests. It clears when you disconnect or reload.
+      </p>
+      <button class="primary" type="submit">Connect</button>
+    </form>
+    <div id="workspace" hidden>
+      <div id="activity" class="notice feedback" role="status" hidden></div>
+      <div id="action-error" class="notice error feedback" role="alert" hidden></div>
+
+      <section id="inbox" class="view" aria-labelledby="inbox-heading">
+        <header class="view-heading">
+          <div>
+            <h1 id="inbox-heading" tabindex="-1">Ranked inbox</h1>
+            <p id="ranking-context" class="muted"></p>
+          </div>
+          <div class="selection-actions">
+            <span id="selection-count" class="muted" aria-live="polite"></span>
+            <button id="start" class="primary" type="button" disabled>Start patching</button>
+          </div>
+        </header>
+        <div id="inbox-table" class="panel table-scroll" tabindex="0"
+             role="region" aria-label="Ranked cases">
+          <table class="case-table" role="table">
+            <thead role="rowgroup">
+              <tr role="row">
+                <th scope="col" class="select-column" role="columnheader">
+                  <span class="sr-only">Select case</span>
+                </th>
+                <th scope="col" class="rank-column" role="columnheader">Rank</th>
+                <th scope="col" class="case-column" role="columnheader">Case and sources</th>
+                <th scope="col" role="columnheader">Ranking rationale</th>
+                <th scope="col" class="patch-column" role="columnheader">Patching status</th>
+              </tr>
+            </thead>
+            <tbody id="case-rows" role="rowgroup"></tbody>
+          </table>
+          <p id="empty-inbox" class="empty" hidden>No cases are available yet.</p>
+        </div>
+      </section>
+
+      <section id="requests" class="view" aria-labelledby="requests-heading" hidden>
+        <header class="view-heading">
+          <div>
+            <h1 id="requests-heading" tabindex="-1">Patching requests</h1>
+          </div>
+          <aside id="request-context" class="worker-context" aria-label="Patching worker"></aside>
+        </header>
+        <div id="receipt" class="panel receipt" hidden></div>
+        <section id="pending-batches" class="panel receipt" aria-labelledby="pending-heading"
+                 hidden>
+          <h2 id="pending-heading">Queue publication</h2>
+          <ul id="pending-rows" class="pending-rows"></ul>
+        </section>
+        <div class="request-layout">
+          <section class="panel request-list" aria-labelledby="attempt-heading">
+            <h2 id="attempt-heading">Published attempts</h2>
+            <ul id="request-rows"></ul>
+            <p class="empty" id="empty-requests" hidden>No attempts have been published.</p>
+          </section>
+          <article id="request-detail" class="panel request-detail" aria-label="Attempt details"
+                   tabindex="-1">
+          </article>
+        </div>
+      </section>
+    </div>
+
+    <footer class="footer">
+      Triage by
+      <a href="https://github.com/php/tamis" target="_blank" rel="noopener noreferrer">Tamis</a>.
+    </footer>
+  </main>
+</body>
+</html>
