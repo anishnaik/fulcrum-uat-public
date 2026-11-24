@@ -854,7 +854,8 @@ function createPr(record, button) {
         return;
       }
       const activity = $("activity");
-      feedback("activity", "Pull request created.");
+      const message = result.existing ? "Existing pull request verified." : "Pull request created.";
+      feedback("activity", message);
       const link = externalLink("Open pull request ↗", result.pr_url);
       if (link) activity.append(" ", link);
       button.remove();

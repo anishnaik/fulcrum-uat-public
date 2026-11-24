@@ -57,11 +57,14 @@ async function requestId(repo, batch, caseId) {
 }
 
 function githubClient(token, fetchGitHub) {
-  return async (path, {method = "GET", data, optional = false} = {}) => {
+  return async (path, {method = "GET", data, optional = false, diff = false} = {}) => {
     if (!path.startsWith("/") || path.startsWith("//")) {
       throw failure("Invalid GitHub API path.");
     }
-    const headers = {Accept: "application/vnd.github+json", Authorization: `Bearer ${token}`};
+    const headers = {
+      Accept: diff ? "application/vnd.github.diff" : "application/vnd.github+json",
+      Authorization: `Bearer ${token}`,
+    };
     if (data !== undefined) headers["Content-Type"] = "application/json";
     const response = await fetchGitHub(`https://api.github.com${path}`, {
       method, headers, body: JSON.stringify(data),
@@ -69,7 +72,7 @@ function githubClient(token, fetchGitHub) {
     });
     if (optional && response.status === 404) return null;
     if (response.status === 204) return null;
-    if (response.ok) return response.json();
+    if (response.ok) return diff ? response.arrayBuffer() : response.json();
     throw failure(`GitHub ${method} returned ${response.status}. Verify repository access and token permissions.`,
       response.status);
   };
@@ -180,7 +183,34 @@ async function buildJobs(github, repo, batch, config, cases, parent) {
   return jobs;
 }
 
-async function publication(state, payload) {
+function matchesPublishedPull(pull, tip, reviewed) {
+  return pull?.head?.sha === reviewed.head &&
+    pull?.base?.ref === reviewed.branch &&
+    pull?.base?.sha === reviewed.base &&
+    tip?.commit?.sha === reviewed.base;
+}
+
+async function verifyReceipt(github, receipt, reviewed) {
+  const stale = failure("The published pull request no longer matches the reviewed candidate.", 409);
+  if (!Number.isSafeInteger(receipt.pr_number) || receipt.pr_number < 1) throw stale;
+  await privateRepository(github, reviewed.target);
+  const root = `/repos/${reviewed.target}`;
+  const endpoint = `${root}/pulls/${receipt.pr_number}`;
+  const diff = await github(endpoint, {diff: true, optional: true});
+  if (!diff) throw stale;
+  const [pull, tip] = await Promise.all([
+    github(endpoint, {optional: true}),
+    github(`${root}/branches/${encodeURIComponent(reviewed.branch)}`, {optional: true}),
+  ]);
+  if (!matchesPublishedPull(pull, tip, reviewed) ||
+      pull.html_url !== receipt.pr_url || receipt.head !== reviewed.head) throw stale;
+  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", diff));
+  const digest = Array.from(hash, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  if (digest !== reviewed.diff_sha256) throw stale;
+  return {...receipt, existing: true};
+}
+
+async function publication(github, state, payload) {
   const id = requireId(payload.request_id, validRequest);
   const [request, terminal, pr] = await Promise.all([
     state.read(`queue/${id}.json`), state.read(`reports/${id}.json`), state.read(`prs/${id}.json`),
@@ -197,8 +227,8 @@ async function publication(state, payload) {
   if (head !== payload.head || diff_sha256 !== payload.diff_sha256) {
     throw failure("The candidate changed. Refresh and review it before publishing.", 409);
   }
-  if (pr?.pr_url) return pr;
   const intent = {request_id: id, target, branch, base, head, diff_sha256};
+  if (pr?.pr_url) return verifyReceipt(github, pr, intent);
   const existing = await state.read(`publications/${id}.json`)
     ?? await state.create(`publications/${id}.json`, {...intent, requested_at: new Date().toISOString()});
   if (Object.keys(intent).some((key) => intent[key] !== existing[key])) {
@@ -275,7 +305,7 @@ export function pagesTransport(ops, token, fetchGitHub = globalThis.fetch) {
     start,
     retry,
     redispatch,
-    "create-pr": (_, payload) => publication(state, payload),
+    "create-pr": (_, payload) => publication(github, state, payload),
   };
   return async (action, payload) => {
     if (!Object.hasOwn(operations, action)) throw failure("Unknown Fulcrum operation.");
