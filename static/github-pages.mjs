@@ -2,7 +2,7 @@ import { batchReceipt, workspaceSnapshot } from "./github-state.mjs";
 
 const stateBranch = "fulcrum-state";
 const workflow = "fulcrum-enqueue.yml";
-const validRepo = /^[\w.-]+\/[\w.-]+$/u;
+const validRepo = /^[a-z\d][a-z\d-]*\/[\w.-]+$/iu;
 const validId = /^[a-z0-9_-]{1,80}$/iu;
 const validRequest = /^[a-f\d]{32}$/u;
 const fullSha = /^[a-f\d]{40}$/u;
@@ -13,7 +13,8 @@ function failure(message, status = 400) {
 }
 
 function repositoryName(repo) {
-  if (typeof repo !== "string" || !validRepo.test(repo)) {
+  if (typeof repo !== "string" || !validRepo.test(repo) ||
+      [".", ".."].includes(repo.split("/")[1])) {
     throw failure("Enter a GitHub repository as owner/name.");
   }
   return repo;
@@ -144,8 +145,9 @@ function route(config, caseId, defaultBranch) {
   return override;
 }
 
-function assertFrozen(frozen, ids, revisions, retryOf) {
-  if (frozen.jobs.length !== ids.length || !frozen.jobs.every((job, index) =>
+function assertFrozen(frozen, batch, ids, revisions, retryOf) {
+  if (frozen.batch !== batch || frozen.jobs.length !== ids.length ||
+      !frozen.jobs.every((job, index) =>
     job.case_id === ids[index] && job.case.revision === revisions[job.case_id] &&
     job.retry_of === retryOf)) {
     throw failure("This batch key already belongs to a different selection.", 409);
@@ -232,7 +234,7 @@ export function pagesTransport(ops, token, fetchGitHub = globalThis.fetch) {
       const proposed = {batch, jobs, created_at: new Date().toISOString()};
       frozen = await state.create(`batches/${batch}.json`, proposed);
     }
-    assertFrozen(frozen, ids, revisions, parent?.id ?? null);
+    assertFrozen(frozen, batch, ids, revisions, parent?.id ?? null);
     return {...batchReceipt(frozen), run_url: await dispatch(branch, batch)};
   }
 

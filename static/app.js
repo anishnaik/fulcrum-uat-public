@@ -849,7 +849,7 @@ function createPr(record, button) {
   }
   mutate("Publishing the reviewed candidate…", () => api("create-pr", payload), (result) => {
       if (result.queued) {
-        feedback("activity", "Publication requested. The worker will verify the reviewed candidate.");
+        feedback("activity", "Publication requested.");
         button.remove();
         return;
       }
@@ -872,6 +872,7 @@ async function connectPages() {
     const token = tokenField.value.trim();
     tokenField.value = "";
     control.disabled = true;
+    feedback("connection", "Connecting to GitHub…");
     try {
       const {pagesTransport} = await import("./github-pages.mjs");
       const transport = pagesTransport($("github-repository").value.trim(), token);
