@@ -277,6 +277,10 @@ function selectRequest(id) {
   state.activeRequest = id;
   renderAttempts();
   renderDetail();
+  if (state.pagesTransport &&
+      state.snapshot.requests.some((entry) => entry.id === id && entry.report?.lazy)) {
+    refresh();
+  }
 }
 
 function openRequest(id) {
@@ -566,7 +570,9 @@ function renderDetail() {
   detail.append(attemptMetadata(record));
   const links = attemptLinks(record);
   if (links.childElementCount) detail.append(links);
-  if (record.report) detail.append(reportEvidence(record.report));
+  if (record.report?.lazy) {
+    detail.append(node("p", "Loading the full report…", "muted"));
+  } else if (record.report) detail.append(reportEvidence(record.report));
   else detail.append(node("p", "No review report is available for this attempt.", "muted"));
   appendReviewAction(detail, record);
 }
@@ -704,7 +710,13 @@ function renderSnapshot(snapshot) {
 
 async function refreshSnapshot() {
   try {
-    renderSnapshot(await api("snapshot"));
+    const payload = state.pagesTransport ? {active_request: state.activeRequest} : undefined;
+    let snapshot = await api("snapshot", payload);
+    if (state.pagesTransport && !state.activeRequest && snapshot.requests.length) {
+      state.activeRequest = snapshot.requests[0].id;
+      snapshot = await api("snapshot", {active_request: state.activeRequest});
+    }
+    renderSnapshot(snapshot);
     feedback("connection", "");
   } catch (error) {
     if (error.status === 401 || error.status === 403) {

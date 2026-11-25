@@ -1,7 +1,7 @@
 const stateBranch = "fulcrum-state";
 const runName = "Fulcrum enqueue ";
 const workflow = "fulcrum-enqueue.yml";
-const groups = new Set(["queue", "claims", "reports", "prs", "batches",
+const groups = new Set(["queue", "claims", "reports", "previews", "prs", "batches",
   "publications", "publication-results"]);
 
 export function batchReceipt(frozen) {
@@ -16,14 +16,18 @@ export function batchReceipt(frozen) {
   };
 }
 
-async function stateRecords(github, state) {
+async function stateRecords(github, state, activeRequest) {
   const tree = await github(`${state.root}/git/trees/${stateBranch}?recursive=1`);
   if (tree.truncated) throw new Error("GitHub truncated the state snapshot. Refresh to retry.");
   const records = new Map();
+  const previews = new Set(tree.tree.filter(({path, type, mode}) =>
+    type === "blob" && mode !== "120000" && /^previews\/[a-f0-9]{32}\.json$/u.test(path))
+    .map(({path}) => path.replace(/^previews\//u, "reports/")));
   const relevant = tree.tree.filter(({type, path}) => type === "blob" && (
     /^(inbox|worker)\.json$/u.test(path) ||
     (groups.has(path.split("/")[0]) && /\.(json|md)$/u.test(path))
-  ));
+  )).filter(({path}) => !/^reports\/[a-f0-9]{32}\.json$/u.test(path) ||
+    path === `reports/${activeRequest}.json` || !previews.has(path));
   for (let index = 0; index < relevant.length; index += 8) {
     await Promise.all(relevant.slice(index, index + 8).map(async ({path, sha, mode}) => {
       if (mode !== "120000") records.set(path, path.endsWith(".md") ? {sha} : await state.blob(sha));
@@ -35,7 +39,7 @@ async function stateRecords(github, state) {
 function requestView(records, request, repo) {
   const id = request.id;
   const claim = records.get(`claims/${id}.json`);
-  const result = records.get(`reports/${id}.json`);
+  const result = records.get(`reports/${id}.json`) ?? records.get(`previews/${id}.json`);
   const pr = records.get(`prs/${id}.json`);
   const publication = records.get(`publications/${id}.json`);
   const publicationResult = records.get(`publication-results/${id}.json`);
@@ -123,8 +127,8 @@ function newestFirst(id) {
     right[id].localeCompare(left[id]);
 }
 
-export async function workspaceSnapshot(github, state, repo, config) {
-  const records = await stateRecords(github, state);
+export async function workspaceSnapshot(github, state, repo, config, activeRequest = null) {
+  const records = await stateRecords(github, state, activeRequest);
   const inbox = records.get("inbox.json") ?? {cases: []};
   const worker = records.get("worker.json") ?? {};
   const requests = [...records].filter(([path]) => path.startsWith("queue/"))

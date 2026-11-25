@@ -302,7 +302,11 @@ export function pagesTransport(ops, token, fetchGitHub = globalThis.fetch) {
   }
 
   const operations = {
-    snapshot: async () => workspaceSnapshot(github, state, repo, await config()),
+    snapshot: async (_, payload) => {
+      const active = payload?.active_request;
+      if (active != null) requireId(active, validRequest);
+      return workspaceSnapshot(github, state, repo, await config(), active);
+    },
     start,
     retry,
     redispatch,
