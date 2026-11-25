@@ -34,7 +34,7 @@
           Inbox <span class="count" id="case-count"></span>
         </a>
         <a id="view-requests" href="#requests">
-          Patching history <span class="count" id="request-count"></span>
+          Patching requests <span class="count" id="request-count"></span>
         </a>
       </nav>
       <div class="top-actions">
@@ -53,9 +53,6 @@
     <noscript>
       <p class="notice">Fulcrum requires JavaScript.</p>
     </noscript>
-    <p class="notice patching-notice">
-      Patching is paused. You can still view the inbox, reports, and existing pull requests.
-    </p>
     <p class="notice" id="connection" role="status">Connecting to GitHub…</p>
     <form id="github-connect" class="panel github-connect" method="post" hidden>
       <h1>Connect to GitHub</h1>
@@ -66,16 +63,23 @@
       <input id="github-token" type="password" required autocomplete="off"
              aria-describedby="github-token-help">
       <p class="muted" id="github-token-help">
-        Use a token with read access to the private repository. The token clears on disconnect or reload.
+        This tab uses the token for GitHub API requests. It clears when you disconnect or reload.
       </p>
       <button class="primary" type="submit">Connect</button>
     </form>
     <div id="workspace" hidden>
+      <div id="activity" class="notice feedback" role="status" hidden></div>
+      <div id="action-error" class="notice error feedback" role="alert" hidden></div>
+
       <section id="inbox" class="view" aria-labelledby="inbox-heading">
         <header class="view-heading">
           <div>
             <h1 id="inbox-heading" tabindex="-1">Ranked inbox</h1>
             <p id="ranking-context" class="muted"></p>
+          </div>
+          <div class="selection-actions">
+            <span id="selection-count" class="muted" aria-live="polite"></span>
+            <button id="start" class="primary" type="button" disabled>Start patching</button>
           </div>
         </header>
         <div id="inbox-table" class="panel table-scroll" tabindex="0"
@@ -83,6 +87,9 @@
           <table class="case-table" role="table">
             <thead role="rowgroup">
               <tr role="row">
+                <th scope="col" class="select-column" role="columnheader">
+                  <span class="sr-only">Select case</span>
+                </th>
                 <th scope="col" class="rank-column" role="columnheader">Rank</th>
                 <th scope="col" class="case-column" role="columnheader">Case and sources</th>
                 <th scope="col" role="columnheader">Ranking rationale</th>
@@ -98,13 +105,14 @@
       <section id="requests" class="view" aria-labelledby="requests-heading" hidden>
         <header class="view-heading">
           <div>
-            <h1 id="requests-heading" tabindex="-1">Patching history</h1>
+            <h1 id="requests-heading" tabindex="-1">Patching requests</h1>
           </div>
-          <aside id="request-context" class="worker-context" aria-label="Last recorded worker state"></aside>
+          <aside id="request-context" class="worker-context" aria-label="Patching worker"></aside>
         </header>
+        <div id="receipt" class="panel receipt" hidden></div>
         <section id="pending-batches" class="panel receipt" aria-labelledby="pending-heading"
                  hidden>
-          <h2 id="pending-heading">Incomplete batches</h2>
+          <h2 id="pending-heading">Queue publication</h2>
           <ul id="pending-rows" class="pending-rows"></ul>
         </section>
         <div class="request-layout">

@@ -4,7 +4,11 @@ const sessionFragment = "#/session/";
 
 const state = {
   snapshot: null,
+  selected: new Set(),
+  batches: new Map(),
   activeRequest: null,
+  receipt: null,
+  busy: false,
   refreshing: null,
   sessionProof: null,
 };
@@ -37,9 +41,9 @@ const rankStates = {
 };
 
 const batchStates = {
-  awaiting_action: "No queue run was recorded.",
-  publishing: "The last recorded queue run was still in progress.",
-  incomplete: "The queue run finished with requests still missing.",
+  awaiting_action: "Waiting for GitHub Actions to report a run.",
+  publishing: "The workflow is publishing requests.",
+  incomplete: "The workflow finished, with requests still missing.",
   failed: "The queue workflow stopped before publishing all requests.",
   unavailable: "GitHub Actions status is unavailable.",
 };
@@ -160,9 +164,32 @@ function projectContext(project) {
   return details;
 }
 
+function selectionControls() {
+  const count = state.selected.size;
+  const selected = `${count} selected`;
+  $("selection-count").textContent = count > 100 ? `${selected} · Maximum 100` : selected;
+  $("start").disabled = state.busy || count === 0 || count > 100;
+}
+
 function makeCaseRow(record, request, pending) {
   const row = node("tr");
   row.setAttribute("role", "row");
+  const selection = node("td", undefined, "case-select");
+  const checkbox = node("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = state.selected.has(record.id);
+  checkbox.disabled = record.eligible === false || pending;
+  checkbox.dataset.caseId = record.id;
+  checkbox.setAttribute("aria-label", `Select ${record.title}`);
+  checkbox.addEventListener("change", () => {
+    if (checkbox.checked) state.selected.add(record.id);
+    else state.selected.delete(record.id);
+    row.classList.toggle("selected", checkbox.checked);
+    selectionControls();
+  });
+  row.classList.toggle("selected", checkbox.checked);
+  selection.append(checkbox);
+
   const rank = node("td", record.rank ?? "—", "rank");
   if (record.rank == null) rank.setAttribute("aria-label", "Unranked");
   const label = node("th", undefined, "case-label");
@@ -178,7 +205,7 @@ function makeCaseRow(record, request, pending) {
 
   const patching = node("td", undefined, "case-status");
   if (pending) {
-    const button = node("button", "Batch incomplete", "link-button");
+    const button = node("button", "Awaiting publication", "link-button");
     button.type = "button";
     button.addEventListener("click", () => setView("requests", true));
     patching.append(button);
@@ -196,10 +223,10 @@ function makeCaseRow(record, request, pending) {
   } else {
     patching.append(node("span", "Not requested", "muted"));
   }
-  for (const cell of [rank, rationale, patching]) {
+  for (const cell of [selection, rank, rationale, patching]) {
     cell.setAttribute("role", "cell");
   }
-  row.append(rank, label, rationale, patching);
+  row.append(selection, rank, label, rationale, patching);
   return row;
 }
 
@@ -209,19 +236,30 @@ function renderCases() {
     (left, right) => (left.rank ?? Infinity) - (right.rank ?? Infinity),
   );
   const pending = pendingCaseIds(state.snapshot.batches ?? []);
+  const present = new Set(sorted.filter((record) => record.eligible !== false &&
+    !pending.has(record.id))
+    .map((record) => record.id));
+  state.selected = new Set([...state.selected].filter((id) => present.has(id)));
+
   const latest = new Map();
   for (const request of requests) {
     if (!latest.has(request.case_id)) latest.set(request.case_id, request);
   }
+  const focused = document.activeElement?.dataset.caseId;
   const rows = sorted.map(
     (record) => makeCaseRow(record, latest.get(record.id), pending.has(record.id)),
   );
   $("case-rows").replaceChildren(...rows);
+  if (focused) {
+    const checkbox = rows.find((row) => row.querySelector("input").dataset.caseId === focused);
+    checkbox?.querySelector("input")?.focus({preventScroll: true});
+  }
   const ranked = sorted.filter((record) => record.rank != null).length;
   $("case-count").textContent = cases.length;
   $("ranking-context").textContent = cases.length
     ? `${ranked} of ${cases.length} cases ranked` : "";
   $("empty-inbox").hidden = !!cases.length;
+  selectionControls();
 }
 
 function pendingCaseIds(batches) {
@@ -530,10 +568,58 @@ function renderDetail() {
   if (links.childElementCount) detail.append(links);
   if (record.report) detail.append(reportEvidence(record.report));
   else detail.append(node("p", "No review report is available for this attempt.", "muted"));
-  if (record.publication_error || record.publication_pending) {
-    detail.append(node("p", record.publication_error ||
-      "Publication was requested before patching paused.", "notice"));
+  appendReviewAction(detail, record);
+}
+
+export function appendReviewAction(detail, record) {
+  if (["failed", "interrupted"].includes(record.status)) {
+    const retry = node("button", "Retry", "quiet-button");
+    retry.type = "button";
+    retry.dataset.mutation = "true";
+    retry.disabled = state.busy;
+    retry.addEventListener("click", () => retryRequest(record.id));
+    detail.append(retry);
+  } else if (record.status === "completed" && record.report?.diff && record.report?.head &&
+             record.report?.diff_sha256 && !record.pr_url) {
+    const publish = node("button", "Create PR", "primary");
+    publish.type = "button";
+    publish.dataset.mutation = "true";
+    publish.disabled = state.busy;
+    if (record.publication_pending || record.publication_error) {
+      detail.append(node("p", record.publication_error ||
+        "Pull request publication requested. Waiting for the worker.", "notice"));
+      return;
+    }
+    publish.addEventListener("click", () => createPr(record, publish));
+    detail.append(publish);
   }
+}
+
+function renderReceipt() {
+  const receipt = $("receipt");
+  if (!state.receipt) return;
+  const ids = state.receipt.request_ids;
+  const heading = node("h2", "Patching submission received");
+  const list = node("ul", undefined, "receipt-list");
+  for (const id of ids) {
+    const record = state.snapshot.requests.find((entry) => entry.id === id);
+    const frozen = state.receipt.jobs?.find((entry) => entry.id === id);
+    const item = node("li");
+    const button = node("button", record?.case_title || frozen?.case_title || id, "link-button");
+    button.type = "button";
+    button.addEventListener("click", () => openRequest(id));
+    item.append(button);
+    const branch = record?.branch || frozen?.branch;
+    const base = record?.base || frozen?.base;
+    if (branch) item.append(node("code", branch, "source-revision"));
+    if (base) item.append(node("code", `base ${base}`, "source-revision"));
+    if (!record) item.append(node("span", "Awaiting queue publication", "muted"));
+    list.append(item);
+  }
+  receipt.replaceChildren(heading, list);
+  const workflow = externalLink("Open queue workflow ↗", state.receipt.run_url);
+  if (workflow) receipt.append(workflow);
+  receipt.hidden = false;
 }
 
 function makeBatchRow(batch) {
@@ -550,14 +636,32 @@ function makeBatchRow(batch) {
     if (missing.has(job.id)) jobs.append(node("li", job.case_title));
   }
   item.append(jobs);
-  const link = externalLink("Open queue run ↗", batch.run_url);
-  if (link) item.append(link);
+  const actions = node("div", undefined, "detail-links");
+  const label = batch.run_url ? "Open queue run ↗" : "Open queue workflow ↗";
+  const link = externalLink(label, batch.run_url || batch.workflow_url);
+  if (link) actions.append(link);
+  if (batch.status !== "publishing") {
+    const button = node("button", "Redispatch missing requests", "quiet-button");
+    button.type = "button";
+    button.dataset.mutation = "true";
+    button.dataset.batchId = batch.batch;
+    button.disabled = state.busy;
+    button.addEventListener("click", () => redispatch(batch.batch));
+    actions.append(button);
+  }
+  item.append(actions);
   return item;
 }
 
 function renderPendingBatches(batches) {
+  const focused = document.activeElement?.dataset.batchId;
   $("pending-batches").hidden = batches.length === 0;
   $("pending-rows").replaceChildren(...batches.map(makeBatchRow));
+  if (focused) {
+    const buttons = $("pending-rows").querySelectorAll("button[data-batch-id]");
+    Array.from(buttons).find((button) => button.dataset.batchId === focused)
+      ?.focus({preventScroll: true});
+  }
 }
 
 function renderSnapshot(snapshot) {
@@ -588,6 +692,7 @@ function renderSnapshot(snapshot) {
       JSON.stringify(previousRequest) !== JSON.stringify(currentRequest)) {
     renderDetail();
   }
+  if (changedRequests) renderReceipt();
   const project = $("project-link");
   const url = externalUrl(snapshot.project_url);
   if (url) project.href = url;
@@ -631,6 +736,130 @@ function setView(view, focus) {
     else $(`view-${name}`).removeAttribute("aria-current");
   }
   if (focus) $(`${view}-heading`).focus();
+}
+
+function busy(value) {
+  state.busy = value;
+  selectionControls();
+  for (const button of document.querySelectorAll("[data-mutation]")) button.disabled = value;
+}
+
+async function mutate(progress, action, onSuccess) {
+  if (state.busy) return;
+  busy(true);
+  feedback("action-error", "");
+  feedback("activity", progress);
+  try {
+    const result = await action();
+    onSuccess(result);
+    if (state.refreshing) await state.refreshing;
+    await refresh();
+  } catch (error) {
+    feedback("activity", "");
+    feedback("action-error", error.status
+      ? error.message
+      : "Could not confirm the action. Repeating it checks the original submission.");
+  } finally {
+    busy(false);
+  }
+}
+
+async function enqueue(path, payload) {
+  const selection = new TextEncoder().encode(JSON.stringify([path, payload]));
+  const digest = await crypto.subtle.digest("SHA-256", selection);
+  const fingerprint = Array.from(new Uint8Array(digest), (byte) => byte.toString(16)
+    .padStart(2, "0")).join("");
+  const key = `fulcrum-batch-${fingerprint}`;
+  const batch = pendingBatch(key) ?? crypto.randomUUID();
+  storeBatch(key, batch);
+  try {
+    const receipt = await api(path, {...payload, batch});
+    storeBatch(key, null);
+    return receipt;
+  } catch (error) {
+    if (error.status && error.status < 500) storeBatch(key, null);
+    throw error;
+  }
+}
+
+function pendingBatch(key) {
+  const batch = state.batches.get(key);
+  try {
+    return batch ?? sessionStorage.getItem(key);
+  } catch {
+    return batch;
+  }
+}
+
+function storeBatch(key, batch) {
+  if (batch) state.batches.set(key, batch);
+  else state.batches.delete(key);
+  try {
+    if (batch) sessionStorage.setItem(key, batch);
+    else sessionStorage.removeItem(key);
+  } catch {
+    // Within-page retries use the in-memory batch when browser storage is disabled.
+  }
+}
+
+function showReceipt(receipt) {
+  state.receipt = receipt;
+  const count = receipt.request_ids.length;
+  feedback("activity", `Submitted ${count} ${count === 1 ? "case" : "cases"} for patching.`);
+  selectRequest(receipt.request_ids[0] ?? null);
+  renderReceipt();
+  setView("requests", true);
+}
+
+function startPatching() {
+  const caseIds = [...state.selected].sort();
+  if (!caseIds.length || caseIds.length > 100) return;
+  const payload = {case_ids: caseIds};
+  if (state.pagesTransport) {
+    const selected = state.snapshot.cases.filter((record) => state.selected.has(record.id));
+    payload.case_revisions = Object.fromEntries(selected.map((record) => [record.id, record.revision]));
+  }
+  mutate("Recording the selected requests…", () => enqueue("start", payload),
+    (receipt) => {
+      for (const id of caseIds) state.selected.delete(id);
+      renderCases();
+      showReceipt(receipt);
+    });
+}
+
+function retryRequest(requestId) {
+  mutate("Recording the retry…", () => enqueue("retry", {request_id: requestId}), showReceipt);
+}
+
+function redispatch(batch) {
+  mutate("Redispatching missing requests…", () => api("redispatch", {batch}),
+    (result) => {
+      const message = result.missing_request_ids.length
+        ? "Resubmitted the original batch for queue publication."
+        : "All requests from this batch have already been published.";
+      feedback("activity", message);
+    });
+}
+
+function createPr(record, button) {
+  const payload = {
+    request_id: record.id,
+    head: record.report.head,
+    diff_sha256: record.report.diff_sha256,
+  };
+  mutate("Publishing the reviewed candidate…", () => api("create-pr", payload), (result) => {
+      if (result.queued) {
+        feedback("activity", "Publication requested.");
+        button.remove();
+        return;
+      }
+      const activity = $("activity");
+      const message = result.existing ? "Existing pull request verified." : "Pull request created.";
+      feedback("activity", message);
+      const link = externalLink("Open pull request ↗", result.pr_url);
+      if (link) activity.append(" ", link);
+      button.remove();
+    });
 }
 
 async function connectPages() {
@@ -713,5 +942,18 @@ if (typeof document !== "undefined") {
     });
   }
   $("refresh").addEventListener("click", refresh);
+  $("start").addEventListener("click", startPatching);
+  setInterval(() => {
+    if (!state.snapshot || document.hidden || state.busy) return;
+    const {requests} = state.snapshot;
+    const active = requests.some(
+      (record) => record.status === "queued" || record.status === "running" ||
+        record.publication_pending,
+    );
+    const pending = state.snapshot.batches?.some(
+      (batch) => batch.status === "awaiting_action" || batch.status === "publishing",
+    );
+    if (active || pending) refresh();
+  }, 15_000);
   boot();
 }

@@ -4,7 +4,7 @@ const workflow = "fulcrum-enqueue.yml";
 const groups = new Set(["queue", "claims", "reports", "prs", "batches",
   "publications", "publication-results"]);
 
-function batchReceipt(frozen) {
+export function batchReceipt(frozen) {
   return {
     batch: frozen.batch,
     created_at: frozen.created_at,
