@@ -4,7 +4,7 @@ const workflow = "fulcrum-enqueue.yml";
 const groups = new Set(["queue", "claims", "reports", "prs", "batches",
   "publications", "publication-results"]);
 
-export function batchReceipt(frozen) {
+function batchReceipt(frozen) {
   return {
     batch: frozen.batch,
     created_at: frozen.created_at,
@@ -63,7 +63,7 @@ function requestView(records, request, repo) {
     view.last_check_in = same ? beat.last_check_in : claim.claimed_at;
     view.stage = same ? beat.stage : null;
     if (Date.now() - Date.parse(view.last_check_in) > 150_000) {
-      view.error = "Worker check-in overdue. Restart the worker to reconcile this claim.";
+      view.error = "The worker stopped checking in before recording a result.";
     }
   }
   return view;
